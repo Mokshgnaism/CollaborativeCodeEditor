@@ -11,6 +11,10 @@ const newotpschema = mongoose.Schema({
     attempts:{
         type:Number,
         default:3
+    },
+    expiresAt:{
+        type:Timestamp,
+        default:Date.now()+10*60*1000
     }
 });
 const OTP = mongoose.model('OTP',newotpschema);

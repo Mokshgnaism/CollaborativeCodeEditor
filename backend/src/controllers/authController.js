@@ -53,8 +53,8 @@ export async function signup(req,res){
         if(existingUser){
             return res.status(403).json({message:"email exissts bro ..."});
         }
-        const hashedPassword = bcrypt.hash(password,12);
-        const newUser = User.create({
+        const hashedPassword = await bcrypt.hash(password,12);
+        const newUser = await User.create({
             email,
             password:hashedPassword,
             name
@@ -74,11 +74,11 @@ export async function login(req,res){
         if(!email||!password){
             return res.status(400).json({message:"fill all the fields"});
         }
-        const user = User.findOne({email});
+        const user = await User.findOne({email});
         if(!user){
             return res.status(400).json({message:"no user found"});
         }
-        const match = bcrypt.compare(password,user.password);
+        const match = await bcrypt.compare(password,user.password);
         if(!match){
             return res.status(403).json({message:"wrong credentials"});
         }
@@ -103,18 +103,18 @@ export async function logout(req,res){
 
 export async function send_otp(req,res){
     try {
-        const {email} = req.body();
-        const user = User.findOne({email});
+        const {email} = req.body;
+        const user = await User.findOne({email});
         if(!user){
             return res.status(400).json({message:"no user found"});
         }
         const plain = Math.floor(100000+Math.random()*900000);
-        const hashed = bcrypt.hash(plain,13);
-        const newotp = OTP.create({
+        const hashed = await bcrypt.hash(plain,13);
+        const newotp = await OTP.create({
             email,
             hashed
         })
-        const otpSent  = sendEmail(email,{
+        const otpSent  = await sendEmail(email,{
             subject:"YOUR COLLAB OTP",
             text:plain.toString(),
             html:`<h1>${plain.toString()}</h1>`
@@ -133,19 +133,20 @@ export async function send_otp(req,res){
 export async function verifyEmail(req,res){
     try {
         const {email,otp} = req.body;
-        const existingOtp = OTP.findOne({email});
+        const existingOtp = await OTP.findOne({email});
         if(!existingOtp){
             return res.status(400).json({message:"no otp exists for the email try sending another"});
         }
-        if(existingOtp.attempts<0){
-            OTP.findByIdAndDelete(existingOtp._id);
+        
+        if(existingOtp.attempts<0||existingOtp.expiresAt<Date.now()){
+           await  OTP.findByIdAndDelete(existingOtp._id);
             return res.status(403).json({message:"please send new otp . this otp is expired due to overatttempting"})
         }
         
         const hashed = existingOtp.hashed;
-        const match = bcrypt.compare(otp,hashed);
+        const match = await bcrypt.compare(otp,hashed);
         if(!match){
-            OTP.findByIdAndUpdate(existingOtp._id,{
+            await OTP.findByIdAndUpdate(existingOtp._id,{
                 $inc:{attempts:-1}
             })
             return res.status(400).json({message:"wrong otp"});
@@ -160,4 +161,51 @@ export async function verifyEmail(req,res){
         return res.status(500).json({message:"internal server error"});
     }
 }
+
+
+
+
+export async function resetPassword(req, res) {
+  try {
+    const { email, otp, newPassword } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const record = await OTP.findOne({ email });
+    if (record && record.expiresAt < Date.now()) {
+      await OTP.findByIdAndDelete(record._id);
+      return res.status(400).json({ success: false, message: 'OTP expired or not found.' });
+    }
+    if (record.attempts <= 0) {
+      await OTP.findByIdAndDelete(record._id);
+      return res.status(502).json({ message: "your attempts per this otp are over please try to resend using logging in again" });
+      
+    }
+    if (!record || record.expiresAt < Date.now()) {
+      return res.status(400).json({ success: false, message: 'OTP expired or not found.' });
+    }
+
+    const match = await bcrypt.compare(otp, record.hashed);
+    if (!match) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP.' });
+    }
+
+    await OTP.findByIdAndDelete(record._id);
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    const token = jwt.sign({ userid: user._id }, process.env.JWT_SECRET, { expiresIn:"3d"});
+    res.cookie('jwt', token, COOKIE_OPTIONS);
+    return res.json({ success: true, message: 'Password reset successful.' });
+  }
+   catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: 'Internal server error', error });
+  }
+}
+
+
+
 
